@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  SRC_DIR: ./
+  SRC_DIR: ./                  # seu c�digo est� na raiz do repo
   DEST_DIR: /var/www/html/nfc_manager
 
 jobs:
@@ -14,28 +14,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # Validação simples dos secrets (SEM indexação dinâmica)
+      # Falha cedo se faltar secret
       - name: Validate required secrets
         run: |
           MISSING=0
           [ -z "${{ secrets.SSH_HOST }}" ] && echo "Missing secret: SSH_HOST" && MISSING=1
           [ -z "${{ secrets.SSH_USER }}" ] && echo "Missing secret: SSH_USER" && MISSING=1
-          [ -z "${{ secrets.SSH_KEY_B64 }}" ] && echo "Missing secret: SSH_KEY_B64" && MISSING=1
+          [ -z "${{ secrets.SSH_KEY }}" ]  && echo "Missing secret: SSH_KEY"  && MISSING=1
           if [ $MISSING -eq 1 ]; then exit 1; fi
 
-      - name: Setup SSH (decode key)
+      - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_deploy
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           PORT="${{ secrets.SSH_PORT }}"
           [ -z "$PORT" ] && PORT=22
           ssh-keyscan -p "$PORT" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
-          # sanity check: falha se a chave privada estiver inválida
-          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null
+          echo "Using ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$PORT"
 
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
@@ -46,4 +46,17 @@ jobs:
           [ -z "$PORT" ] && PORT=22
           rsync -avz --delete \
             --exclude ".git" --exclude ".github" \
-            --exclude "node_mo_
+            --exclude "node_modules" --exclude "vendor" \
+            -e "ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes" \
+            "$SRC_DIR" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$DEST_DIR/"
+
+      - name: Fix perms & reload Nginx
+        run: |
+          PORT="${{ secrets.SSH_PORT }}"
+          [ -z "$PORT" ] && PORT=22
+          ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'sudo chown -R www-data:www-data /var/www/html/nfc_manager &&
+             sudo find /var/www/html/nfc_manager -type d -exec chmod 755 {} \; &&
+             sudo find /var/www/html/nfc_manager -type f -exec chmod 644 {} \; &&
+             sudo systemctl reload nginx || true'
