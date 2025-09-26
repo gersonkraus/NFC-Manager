@@ -39,8 +39,9 @@ jobs:
 
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
-- name: Rsync to server
-  run: |
+	
+	- name: Rsync to server
+ 	run: |
     PORT="${{ secrets.SSH_PORT }}"
     [ -z "$PORT" ] && PORT=22
     rsync -avz --delete \
@@ -49,6 +50,7 @@ jobs:
       --exclude "node_modules" --exclude "vendor" \
       -e "ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes" \
       "$SRC_DIR" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$DEST_DIR/"
+
 
       - name: Fix perms & reload Nginx
         run: |
