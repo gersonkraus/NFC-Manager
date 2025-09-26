@@ -2,47 +2,57 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [ "main" ]      # dispara quando você fizer push no branch main
-  workflow_dispatch:          # permite rodar manualmente na aba Actions
+    branches: [ "main" ]
+  workflow_dispatch:
 
 env:
-  SRC_DIR: ./                 # seu código está na raiz do repositório
-  DEST_DIR: /var/www/html/nfc_manager   # caminho da aplicação na VPS
+  SRC_DIR: ./
+  DEST_DIR: /var/www/html/nfc_manager
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Validate required secrets
+        run: |
+          for v in SSH_HOST SSH_USER SSH_KEY_B64; do
+            if [ -z "${{ secrets[$v] }}" ]; then echo "Missing secret: $v"; exit 1; fi
+          done
+
+      - name: Setup SSH (decode key)
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
+          echo "${{ secrets.SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-          PORT=${{ secrets.SSH_PORT || 22 }}
-          printf "Host vps\n  HostName %s\n  User %s\n  Port %s\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n" \
-            "${{ secrets.SSH_HOST }}" "${{ secrets.SSH_USER }}" "${PORT}" >> ~/.ssh/config
-          chmod 600 ~/.ssh/config
+          PORT="${{ secrets.SSH_PORT }}"
+          [ -z "$PORT" ] && PORT=22
+          ssh-keyscan -p "$PORT" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          # sanity check: extrai a pública da privada (falha se chave estiver inválida)
+          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null
 
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
 
-      - name: Sync files to server
+      - name: Rsync to server
         run: |
+          PORT="${{ secrets.SSH_PORT }}"
+          [ -z "$PORT" ] && PORT=22
           rsync -avz --delete \
-            --exclude ".git" \
-            --exclude ".github" \
-            --exclude "node_modules" \
-            --exclude "vendor" \
-            "$SRC_DIR" vps:"$DEST_DIR"/
+            --exclude ".git" --exclude ".github" \
+            --exclude "node_modules" --exclude "vendor" \
+            -e "ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes" \
+            "$SRC_DIR" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$DEST_DIR/"
 
-      - name: Fix permissions & reload Nginx
+      - name: Fix perms & reload Nginx
         run: |
-          ssh vps 'sudo chown -R www-data:www-data '"$DEST_DIR"' && \
-                   sudo find '"$DEST_DIR"' -type d -exec chmod 755 {} \; && \
-                   sudo find '"$DEST_DIR"' -type f -exec chmod 644 {} \; && \
-                   sudo systemctl reload nginx || true'
+          PORT="${{ secrets.SSH_PORT }}"
+          [ -z "$PORT" ] && PORT=22
+          ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'sudo chown -R www-data:www-data /var/www/html/nfc_manager &&
+             sudo find /var/www/html/nfc_manager -type d -exec chmod 755 {} \; &&
+             sudo find /var/www/html/nfc_manager -type f -exec chmod 644 {} \; &&
+             sudo systemctl reload nginx || true'
