@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  SRC_DIR: ./                  # seu código está na raiz do repo
+  SRC_DIR: ./
   DEST_DIR: /var/www/html/nfc_manager
 
 jobs:
@@ -14,28 +14,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Falha cedo se faltar secret
+      # Validação simples dos secrets (SEM indexação dinâmica)
       - name: Validate required secrets
         run: |
           MISSING=0
           [ -z "${{ secrets.SSH_HOST }}" ] && echo "Missing secret: SSH_HOST" && MISSING=1
           [ -z "${{ secrets.SSH_USER }}" ] && echo "Missing secret: SSH_USER" && MISSING=1
-          [ -z "${{ secrets.SSH_KEY }}" ]  && echo "Missing secret: SSH_KEY"  && MISSING=1
+          [ -z "${{ secrets.SSH_KEY_B64 }}" ] && echo "Missing secret: SSH_KEY_B64" && MISSING=1
           if [ $MISSING -eq 1 ]; then exit 1; fi
 
-      - name: Setup SSH
+      - name: Setup SSH (decode key)
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
+          echo "${{ secrets.SSH_KEY_B64 }}" | base64 -d > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           PORT="${{ secrets.SSH_PORT }}"
           [ -z "$PORT" ] && PORT=22
           ssh-keyscan -p "$PORT" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
-          echo "Using ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$PORT"
+          # sanity check: falha se a chave privada estiver inválida
+          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null
 
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
