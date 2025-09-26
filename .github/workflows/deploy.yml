@@ -1,78 +1,48 @@
 name: Deploy to VPS
 
 on:
-
   push:
-
-    branches: [ "main" ]
-
-  workflow_dispatch:
-
-
+    branches: [ "main" ]      # dispara quando você fizer push no branch main
+  workflow_dispatch:          # permite rodar manualmente na aba Actions
 
 env:
-
-  SRC_DIR: ./        # código está na raiz do repo
-
-  DEST_DIR: /var/www/html/nfc_manager
-
-
+  SRC_DIR: ./                 # seu código está na raiz do repositório
+  DEST_DIR: /var/www/html/nfc_manager   # caminho da aplicação na VPS
 
 jobs:
-
   deploy:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup SSH
-
         run: |
-
           mkdir -p ~/.ssh
-
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
-
           chmod 600 ~/.ssh/id_deploy
-
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
-
           PORT=${{ secrets.SSH_PORT || 22 }}
-
           printf "Host vps\n  HostName %s\n  User %s\n  Port %s\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n" \
-
             "${{ secrets.SSH_HOST }}" "${{ secrets.SSH_USER }}" "${PORT}" >> ~/.ssh/config
-
           chmod 600 ~/.ssh/config
 
       - name: Install rsync
-
         run: sudo apt-get update && sudo apt-get install -y rsync
 
-      - name: Rsync to server
-
+      - name: Sync files to server
         run: |
-
           rsync -avz --delete \
-
-            --exclude ".git" --exclude ".github" \
-
-            --exclude "node_modules" --exclude "vendor" \
-
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "node_modules" \
+            --exclude "vendor" \
             "$SRC_DIR" vps:"$DEST_DIR"/
 
-      - name: Fix perms & reload Nginx
-
+      - name: Fix permissions & reload Nginx
         run: |
-
           ssh vps 'sudo chown -R www-data:www-data '"$DEST_DIR"' && \
-
                    sudo find '"$DEST_DIR"' -type d -exec chmod 755 {} \; && \
-
                    sudo find '"$DEST_DIR"' -type f -exec chmod 644 {} \; && \
-
                    sudo systemctl reload nginx || true'
-
