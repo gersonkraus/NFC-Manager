@@ -28,4 +28,4 @@ Sistema simples para cadastrar e gerenciar TAGs NFC e registrar leituras com geo
 - `public/index.php` → roteador simples e rotas públicas (t, content, api, admin).
 - `views/*` → telas do admin, mapa (Leaflet via CDN).
 - `lib/db.php` / `lib/helpers.php` → conexão, sessão, utilitários.
-- `db/schema.sql` → tabelas + admin padrão.
+- `db/schema.sql` → tabelas + admin padrão.Deploy test: Fri Sep 26 22:38:15 UTC 2025
