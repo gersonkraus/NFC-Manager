@@ -10,7 +10,7 @@ return [
     'charset' => 'utf8mb4',
   ],
   'app' => [
-    'base_url' => 'https://gersonkraus.com/nfc_manager/public', // e.g. 'http://localhost/nfc_manager/public'
+    'base_url' => 'https://gersonkraus.com/nfc_manager/public', 
     'session_name' => 'nfc_app',
   ]
 ];
