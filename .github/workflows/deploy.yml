@@ -2,28 +2,31 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ "main" ]        # dispara a cada push no main
+  workflow_dispatch:            # permite rodar manualmente pela aba Actions
 
 env:
-  SRC_DIR: ./
+  SRC_DIR: ./                   # seu código está na raiz do repo
   DEST_DIR: /var/www/html/nfc_manager
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Falha cedo se faltar secret
       - name: Validate required secrets
         run: |
           MISSING=0
-          [ -z "${{ secrets.SSH_HOST }}" ] && echo "Missing secret: SSH_HOST" && MISSING=1
-          [ -z "${{ secrets.SSH_USER }}" ] && echo "Missing secret: SSH_USER" && MISSING=1
+          [ -z "${{ secrets.SSH_HOST }}" ]   && echo "Missing secret: SSH_HOST" && MISSING=1
+          [ -z "${{ secrets.SSH_USER }}" ]   && echo "Missing secret: SSH_USER" && MISSING=1
           [ -z "${{ secrets.SSH_KEY_B64 }}" ] && echo "Missing secret: SSH_KEY_B64" && MISSING=1
           if [ $MISSING -eq 1 ]; then exit 1; fi
 
+      # Prepara SSH e decodifica a chave privada (em base64 para não corromper)
       - name: Setup SSH (decode key)
         run: |
           mkdir -p ~/.ssh
@@ -33,11 +36,13 @@ jobs:
           [ -z "$PORT" ] && PORT=22
           ssh-keyscan -p "$PORT" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
+          # sanity check: falha se a chave estiver inválida
           ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null
 
       - name: Install rsync
         run: sudo apt-get update && sudo apt-get install -y rsync
 
+      # Sincroniza SEM tocar em times/perms; preserva config.php
       - name: Rsync to server
         run: |
           PORT="${{ secrets.SSH_PORT }}"
@@ -46,16 +51,34 @@ jobs:
             --omit-dir-times --no-times --no-perms \
             --exclude ".git" --exclude ".github" \
             --exclude "node_modules" --exclude "vendor" \
+            --exclude "config/config.php" \
             -e "ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes" \
             "$SRC_DIR" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$DEST_DIR/"
 
+      # Mantém dono=ubuntu e grupo=www-data; garante escrita do grupo e recarrega Nginx
       - name: Fix perms & reload Nginx
         run: |
           PORT="${{ secrets.SSH_PORT }}"
           [ -z "$PORT" ] && PORT=22
           ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=yes \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            'sudo chown -R www-data:www-data /var/www/html/nfc_manager &&
-             sudo find /var/www/html/nfc_manager -type d -exec chmod 755 {} \; &&
-             sudo find /var/www/html/nfc_manager -type f -exec chmod 644 {} \; &&
-             sudo systemctl reload nginx || true'
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
+              # instala ACL se não tiver (opcional)
+              if ! command -v setfacl >/dev/null 2>&1; then sudo apt-get update && sudo apt-get install -y acl || true; fi
+
+              # dono/grupo e permissões (dirs 2775 com setgid, files 664)
+              sudo chown -R ubuntu:www-data /var/www/html/nfc_manager &&
+              sudo find  /var/www/html/nfc_manager -type d -exec chmod 2775 {} \; &&
+              sudo find  /var/www/html/nfc_manager -type f -exec chmod 664  {} \; &&
+
+              # ACL para manter grupo www-data com rwx em novos arquivos
+              sudo setfacl -R -m g:www-data:rwx /var/www/html/nfc_manager || true &&
+              sudo setfacl -R -d -m g:www-data:rwx /var/www/html/nfc_manager || true &&
+
+              # (opcional) garanta que a pasta de uploads exista e seja gravável
+              sudo mkdir -p /var/www/html/nfc_manager/public/uploads &&
+              sudo chown -R ubuntu:www-data /var/www/html/nfc_manager/public/uploads &&
+              sudo chmod -R 2775 /var/www/html/nfc_manager/public/uploads &&
+              sudo setfacl -R -m g:www-data:rwx -d -m g:www-data:rwx /var/www/html/nfc_manager/public/uploads || true &&
+
+              sudo systemctl reload nginx || true
+            '
